@@ -98,6 +98,38 @@ static LogicalResult tileMmt4DOp(linalg::Mmt4DOp op, arm64VectorExtension vector
   return success();
 }
 
+// Tile the height dimensions of NCHW/FCHW convolution to one. This exposes a
+// 1-D NCW/FCW convolution, which the vectorization pass schedules as a 4x4
+// filter/output-width outer product.
+static LogicalResult tileAndDecomposeConv2D(linalg::Conv2DNchwFchwOp op) {
+  IRRewriter rewriter(op.getContext());
+  rewriter.setInsertionPoint(op);
+
+  OpFoldResult zero = rewriter.getIndexAttr(0);
+  OpFoldResult one = rewriter.getIndexAttr(1);
+  scf::SCFTilingOptions options;
+  // Loop order: N, F, OH, OW, C, KH, KW.
+  options.setTileSizes({zero, zero, one, zero, zero, one, zero});
+
+  auto tiled = scf::tileUsingSCF(
+      rewriter, cast<TilingInterface>(op.getOperation()), options);
+  if (failed(tiled) || tiled->tiledOps.size() != 1)
+    return failure();
+  rewriter.replaceOp(op, tiled->replacements);
+
+  Operation *tiledOp = tiled->tiledOps.front();
+  auto decomposable = dyn_cast<linalg::AggregatedOpInterface>(tiledOp);
+  if (!decomposable)
+    return failure();
+  rewriter.setInsertionPoint(tiledOp);
+  FailureOr<SmallVector<Value>> decomposed =
+      decomposable.decomposeOperation(rewriter);
+  if (failed(decomposed))
+    return failure();
+  rewriter.replaceOp(tiledOp, *decomposed);
+  return success();
+}
+
 static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vectorExt) {
   // Early exit.
   unsigned numLoops = op.getNumLoops();
@@ -108,6 +140,8 @@ static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vect
   }
 
   // Specialized tiling for certain ops
+  if (isa<linalg::Conv2DNchwFchwOp>(op))
+    return tileAndDecomposeConv2D(cast<linalg::Conv2DNchwFchwOp>(op));
   if (isa<linalg::Mmt4DOp>(op))
     return tileMmt4DOp(cast<linalg::Mmt4DOp>(op), vectorExt, numLoops);
 
