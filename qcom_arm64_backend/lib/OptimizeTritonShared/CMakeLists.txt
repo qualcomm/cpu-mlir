@@ -16,6 +16,7 @@ add_mlir_conversion_library(OptimizeTritonShared
 
         LINK_LIBS PUBLIC
         MLIRBufferizationDialect
+        MLIRBufferizationPipelines
         MLIRBufferizationTransforms
         MLIRIR
         MLIRMemRefDialect
