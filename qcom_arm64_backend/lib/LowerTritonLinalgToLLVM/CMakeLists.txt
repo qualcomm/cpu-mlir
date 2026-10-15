@@ -1,4 +1,5 @@
 add_mlir_conversion_library(LowerTritonLinalgToLLVM
+        ARM64MathApproximation.cpp
         ARM64ProfInstrumentation.cpp
         LowerTmTensor.cpp
 	LowerTritonLinalgToLLVM.cpp

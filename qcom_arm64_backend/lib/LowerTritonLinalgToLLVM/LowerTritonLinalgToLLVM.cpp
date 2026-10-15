@@ -76,6 +76,9 @@ void addTritonLinalgToLLVMPasses(
   pm.addPass(createSCFToControlFlowPass());
   pm.addPass(createConvertControlFlowToLLVMPass());
 
+  // Must run before ConvertMathToLLVM: math.erf has no LLVM lowering, and
+  // vector math.exp would otherwise be scalarized into libm calls.
+  pm.addPass(createTritonARM64MathApproximationPass());
   ConvertVectorToLLVMPassOptions options{};
   options.armSVE = (vec_ext == SVE || vec_ext == SME);
   pm.addPass(createConvertVectorToLLVMPass(options));

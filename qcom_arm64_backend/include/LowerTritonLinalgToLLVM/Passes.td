@@ -40,4 +40,22 @@ def TritonARM64LowerConstantsSeparately :
   let constructor = "mlir::triton::createLowerConstantsSeparatelyPass()";
 }
 
+def TritonARM64MathApproximation :
+    Pass<"triton-arm64-math-approximation", "mlir::ModuleOp"> {
+  let summary = "Expand selected math ops into polynomial approximations";
+  let description = [{
+    Rewrites math ops into arith/vector ops (upstream MLIR polynomial
+    approximations), so they stay vectorized instead of becoming per-lane
+    libm calls. f16/bf16 ops are computed in f32. Must run before
+    convert-math-to-llvm; math.erf has no LLVM lowering otherwise.
+  }];
+
+  let options = [
+  ListOption<"ops", "ops", "std::string",
+             "Math op names to approximate (default: math.erf,math.exp,math.tanh)">,
+  ];
+
+  let constructor = "mlir::triton::createTritonARM64MathApproximationPass()";
+}
+
 #endif

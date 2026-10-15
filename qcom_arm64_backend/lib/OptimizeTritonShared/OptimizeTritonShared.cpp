@@ -93,6 +93,11 @@ ModuleOp arm64OptimizeTritonShared(ModuleOp mod, arm64VectorExtension vec_ext,
 
 void addOptimizeTritonSharedPasses(mlir::OpPassManager &pm,
     arm64VectorExtension vec_ext) {
+  // triton-shared emits one linalg.generic per elementwise op. Fusing them
+  // avoids temporaries and keeps long chains (e.g. GELU) within the greedy
+  // rewrite limit of bubble-up-extract-slice.
+  pm.addPass(createLinalgElementwiseOpFusionPass());
+  pm.addPass(createCanonicalizerPass());
   pm.addNestedPass<func::FuncOp>(createTritonARM64PuntBufferPass());
   pm.addNestedPass<func::FuncOp>(createTritonARM64RVOPass());
   pm.addPass(createCanonicalizerPass());

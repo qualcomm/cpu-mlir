@@ -23,6 +23,7 @@ namespace mlir {
 namespace triton {
 #define GEN_PASS_DECL_TRITONARM64PROFPASS
 #define GEN_PASS_DECL_TRITONARM64LOWERCONSTANTSSEPARATELY
+#define GEN_PASS_DECL_TRITONARM64MATHAPPROXIMATION
 #include "LowerTritonLinalgToLLVM/Passes.h.inc"
 
 std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
@@ -34,6 +35,10 @@ std::unique_ptr<OperationPass<func::FuncOp>> createTritonARM64ProfPass(
 
 std::unique_ptr<OperationPass<ModuleOp>> createLowerConstantsSeparatelyPass(
     std::shared_ptr<std::vector<ModuleOp>> sink = nullptr);
+
+std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64MathApproximationPass(
+    const TritonARM64MathApproximationOptions &options =
+        TritonARM64MathApproximationOptions());
 
 } // namespace triton
 } // namespace mlir
