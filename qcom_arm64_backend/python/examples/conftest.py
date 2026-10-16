@@ -92,6 +92,7 @@ supported = {
     "test_layernorm.py",
 
     # QC-internal tests
+    "test_activations.py",
     "test_flash_attention.py"
 }
 

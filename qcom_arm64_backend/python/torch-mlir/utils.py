@@ -55,9 +55,10 @@ class ModelManager:
         with open(self.linalg_filename, "wb") as f:
             f.write(bytecode)
 
-    def execute_and_compare(self, rtol=1e-05, atol=1e-08, options={}, separate_constants=False):
-        # Generate reference output
-        reference = self.model(*self.inputs)
+    def execute_and_compare(self, rtol=1e-05, atol=1e-08, options={}, separate_constants=False, reference=None):
+        # Generate reference output, unless the caller gives one
+        if reference is None:
+            reference = self.model(*self.inputs)
 
         # ARM64 execution
         output = TorchMLIRLauncher().run_torch_mlir(
@@ -70,12 +71,18 @@ class ModelManager:
                 print("\nReference output:\n", reference.shape, reference)
                 print("\narm64 output:\n", output[0].shape, output[0])
 
-            print("Match: ", torch.allclose(output[0], reference, rtol, atol))
+            match = torch.allclose(output[0], reference, rtol, atol)
+            print("Match: ", match)
+            return match
 
         elif len(output) > 1:
+            matches = []
             for index in range(len(output)):
                 if self.dump_outputs:
                     print("\nReference output:\n", reference[index])
                     print("\narm64 output:\n", output[index])
 
-                print("Match: ", torch.allclose(output[index], reference[index], rtol, atol))
+                match = torch.allclose(output[index], reference[index], rtol, atol)
+                print("Match: ", match)
+                matches.append(match)
+            return all(matches)
