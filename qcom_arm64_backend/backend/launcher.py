@@ -305,12 +305,9 @@ class WrapperGenerator:
         if len(self.output_profs) > 0:
             result_fields_string = ""
             for idx, res in enumerate(self.output_profs):
-                # TODO: add support for non tensor output, currently no existing
-                #       method to write scalars to a file
-                if res.rank:
-                    result_fields_string += (
-                        f"\n\tMemRefDescriptor<{res.dtype},{res.rank}> do{idx};"
-                    )
+                result_fields_string += (
+                    f"\n\tMemRefDescriptor<{res.dtype},{res.rank}> do{idx};"
+                )
             return self.common_strings.result_struct_def.format(result_fields=result_fields_string)
         else:
             return ""

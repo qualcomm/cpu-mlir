@@ -45,5 +45,4 @@ if [[ "$TRITON_ARM64_DEBUG" == 1 ]]; then
     export TRITON_DISABLE_LINE_INFO=0
 fi
 
-# Keep benchmark output visible without requiring callers to remember -s.
-pytest -s --tb=short "$@"
+pytest $@
