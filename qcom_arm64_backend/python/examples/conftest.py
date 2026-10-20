@@ -46,7 +46,7 @@ def pytest_addoption(parser):
         "--target",
         action="store",
         default="sme",
-        help="ARM64 vector extension to generate code for, valid values are \"none\", \"sve\", \"sme\""
+        help="ARM64 vector extension to generate code for, valid values are \"neon\", \"sve\", \"sme\""
     )
 
 arm64_vect=["neon", "sve", "sme"]
@@ -89,6 +89,7 @@ supported = {
     "test_vec_add.py",
     "test_mm.py",
     "test_reduce.py",
+    "test_sum_reduce_triton.py",
     "test_layernorm.py",
 
     # QC-internal tests

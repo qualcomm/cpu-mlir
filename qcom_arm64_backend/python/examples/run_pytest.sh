@@ -49,4 +49,5 @@ fi
 # export MLIR_DUMP_TRITON_SHARED_SPECIFIC_PASS="ConvertVectorToLLVMPass" # Specific single pass MLIR dump
 # export MLIR_DUMP_ALL_IR_DATA=1 # Dumps all constant data (default omits constant data from dump)
 
-pytest $@
+# Keep benchmark output visible without requiring callers to remember -s.
+pytest -s --tb=short "$@"
