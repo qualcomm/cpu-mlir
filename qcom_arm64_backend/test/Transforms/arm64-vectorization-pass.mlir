@@ -1,5 +1,6 @@
 // RUN: arm64-mlir-opt %s -triton-arm64-linalg-vectorization="vector-ext=neon" | FileCheck %s
 // RUN: arm64-mlir-opt %s -triton-arm64-linalg-vectorization | FileCheck %s --check-prefix=CHECK-SME
+// RUN: arm64-mlir-opt %s -triton-arm64-linalg-tiling="vector-ext=neon" -triton-arm64-linalg-vectorization="vector-ext=neon" | FileCheck %s --check-prefix=CHECK-CONV
 
 // CHECK-LABEL: func.func @test_elementwise_static
 // CHECK-NOT:   linalg.map
@@ -191,4 +192,21 @@ func.func @test_library_call_skipped_generic(%arg0: tensor<8xf32>,
       linalg.yield %in : f32
   } -> tensor<8xf32>
   return %0 : tensor<8xf32>
+}
+
+// CHECK-CONV-LABEL: func.func @test_conv1d_outer_product
+// CHECK-CONV:       scf.for
+// CHECK-CONV:       vector.transfer_read {{.+}} : tensor<1x1x4xf32>, vector<1x1x4xf32>
+// CHECK-CONV:       vector.transfer_read {{.+}} : tensor<4x1x1xf32>, vector<4x1x1xf32>
+// CHECK-CONV:       vector.transfer_read {{.+}} : tensor<1x4x4xf32>, vector<1x4x4xf32>
+// CHECK-CONV:       vector.contract
+// CHECK-CONV:       vector.transfer_write {{.+}} : vector<1x4x4xf32>, tensor<1x4x4xf32>
+// CHECK-CONV-NOT:   linalg.conv_1d_ncw_fcw
+func.func @test_conv1d_outer_product(%input: tensor<1x3x6xf32>,
+                                     %filter: tensor<4x3x3xf32>,
+                                     %output: tensor<1x4x4xf32>) -> tensor<1x4x4xf32> {
+  %0 = linalg.conv_1d_ncw_fcw
+    ins(%input, %filter : tensor<1x3x6xf32>, tensor<4x3x3xf32>)
+    outs(%output : tensor<1x4x4xf32>) -> tensor<1x4x4xf32>
+  return %0 : tensor<1x4x4xf32>
 }
