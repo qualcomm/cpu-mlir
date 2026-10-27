@@ -119,7 +119,8 @@ def process_mlirbc(mlir_file):
 
     # Run the shell command to filter out lines starting with 'torch_tensor_'
     command = f'egrep -v "^ *torch_tensor_" "{mlir_file}" > "{new_mlir_file}"'
-    subprocess.run(command, shell=True, check=True)
+    command_list = command.split()
+    subprocess.run(command, shell=False, check=True)
 
     print(f"==> Constants removed in initial linalg IR, saved as: {new_mlir_file}")
 
