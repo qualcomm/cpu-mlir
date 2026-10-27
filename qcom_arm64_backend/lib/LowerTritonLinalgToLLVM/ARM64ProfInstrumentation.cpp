@@ -149,7 +149,7 @@ struct TritonARM64ProfPass : public ::impl::TritonARM64ProfPassBase<TritonARM64P
   // Collect ops of interest.
   std::vector<std::string> collectOps(scf::ForOp forOp) {
     std::vector<std::string> opNames;
-    forOp.getBody()->walk([&](Operation *op) {
+    forOp.getBody()->walk([&](Operation *op) -> void {
       // Filter out non-trivial operations
       auto opName = op->getName().getStringRef();
 

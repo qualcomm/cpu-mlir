@@ -84,10 +84,11 @@ def _run_command(command, env):
     if (utils.get_verbose_level() > 1):
         print("    command:", command)
 
+    command_list=command.split()
     try:
         subprocess.run(
-            command,
-            shell=True,
+            command_list,
+            shell=False,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
