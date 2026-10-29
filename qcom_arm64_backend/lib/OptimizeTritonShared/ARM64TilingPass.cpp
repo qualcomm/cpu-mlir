@@ -134,10 +134,10 @@ static LogicalResult tileConv1D(linalg::Conv1DNcwFcwOp op) {
 
   OpFoldResult zero = rewriter.getIndexAttr(0);
   OpFoldResult one = rewriter.getIndexAttr(1);
+  OpFoldResult four = rewriter.getIndexAttr(4);
   scf::SCFTilingOptions options;
   // Loop order: N, F, OW, C, KW.
-  options.setTileSizes({zero, rewriter.getIndexAttr(4),
-                        rewriter.getIndexAttr(4), one, one});
+  options.setTileSizes({zero, four, four, one, one});
 
   auto tiled = scf::tileUsingSCF(
       rewriter, cast<TilingInterface>(op.getOperation()), options);
