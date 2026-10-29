@@ -101,7 +101,14 @@ static LogicalResult vectorizeLinalgOp(linalg::LinalgOp op, arm64VectorExtension
   SmallVector<int64_t> vecSizes(numLoops, 1);
   SmallVector<bool> scalableDims(numLoops, false);
   bool assumeDynamicDimsMatchVecSizes = false;
-  if (isa<linalg::MatmulOp>(op) && vectorExt == SME) {
+  if (isa<linalg::Conv1DNcwFcwOp>(op)) {
+    // The preceding Conv2D schedule decomposes one output/filter-height tile
+    // to NCW/FCW. Vectorize F and OW as a 4x4 outer product while retaining
+    // C and KW as scalar reduction tiles.
+    if (numLoops != 5)
+      return failure();
+    vecSizes = {1, 4, 4, 1, 1};
+  } else if (isa<linalg::MatmulOp>(op) && vectorExt == SME) {
     scalableDims = {true, true, false};
     vecSizes = {8, 8, 2};
   } else if (isa<linalg::Mmt4DOp>(op) && vectorExt == SME) {

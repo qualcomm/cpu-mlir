@@ -174,3 +174,34 @@ func.func @test_no_tiling_zero_loops(%arg0: tensor<f32>,
   } -> tensor<f32>
   return %0 : tensor<f32>
 }
+
+// CHECK-LABEL: func.func @test_conv1d_outer_product_tiling
+// CHECK:       scf.for {{.+}} step {{.+}}4
+// CHECK:       scf.for {{.+}} step {{.+}}4
+// CHECK:       scf.for {{.+}} step {{.+}}1
+// CHECK:       scf.for {{.+}} step {{.+}}1
+// CHECK:       linalg.conv_1d_ncw_fcw
+func.func @test_conv1d_outer_product_tiling(
+    %input: tensor<1x3x6xf32>, %filter: tensor<4x3x3xf32>,
+    %output: tensor<1x4x4xf32>) -> tensor<1x4x4xf32> {
+  %0 = linalg.conv_1d_ncw_fcw
+    ins(%input, %filter : tensor<1x3x6xf32>, tensor<4x3x3xf32>)
+    outs(%output : tensor<1x4x4xf32>) -> tensor<1x4x4xf32>
+  return %0 : tensor<1x4x4xf32>
+}
+
+// CHECK-LABEL: func.func @test_conv2d_decomposes_to_conv1d
+// CHECK:       scf.for
+// CHECK:       scf.for
+// CHECK-NOT:   linalg.conv_2d_nchw_fchw
+// CHECK:       linalg.conv_1d_ncw_fcw
+// CHECK:       return
+func.func @test_conv2d_decomposes_to_conv1d(
+    %input: tensor<1x3x5x6xf32>,
+    %filter: tensor<4x3x3x3xf32>,
+    %output: tensor<1x4x3x4xf32>) -> tensor<1x4x3x4xf32> {
+  %0 = linalg.conv_2d_nchw_fchw
+    ins(%input, %filter : tensor<1x3x5x6xf32>, tensor<4x3x3x3xf32>)
+    outs(%output : tensor<1x4x3x4xf32>) -> tensor<1x4x3x4xf32>
+  return %0 : tensor<1x4x3x4xf32>
+}

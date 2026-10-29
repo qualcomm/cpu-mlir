@@ -98,6 +98,55 @@ static LogicalResult tileMmt4DOp(linalg::Mmt4DOp op, arm64VectorExtension vector
   return success();
 }
 
+// Tile height dimensions, OH and KH, then decompose NCHW/FCHW convolution to
+// NCW/FCW.
+static LogicalResult tileAndDecomposeConv2D(linalg::Conv2DNchwFchwOp op) {
+  IRRewriter rewriter(op.getContext());
+  rewriter.setInsertionPoint(op);
+
+  OpFoldResult zero = rewriter.getIndexAttr(0);
+  OpFoldResult one = rewriter.getIndexAttr(1);
+  scf::SCFTilingOptions options;
+  // Loop order: N, F, OH, OW, C, KH, KW.
+  options.setTileSizes({zero, zero, one, zero, zero, one, zero});
+
+  auto tiled = scf::tileUsingSCF(
+      rewriter, cast<TilingInterface>(op.getOperation()), options);
+  if (failed(tiled) || tiled->tiledOps.size() != 1)
+    return failure();
+  rewriter.replaceOp(op, tiled->replacements);
+
+  Operation *tiledOp = tiled->tiledOps.front();
+  rewriter.setInsertionPoint(tiledOp);
+  // The tiled convolution has unit OH and KH dimensions.
+  FailureOr<linalg::LinalgOp> decomposed =
+      linalg::downscaleSizeOneWindowedConvolution(
+          rewriter, cast<linalg::LinalgOp>(tiledOp));
+  if (failed(decomposed))
+    return failure();
+  return success();
+}
+
+// Tile F and OW, and split C and KW, before vectorization.
+static LogicalResult tileConv1D(linalg::Conv1DNcwFcwOp op) {
+  IRRewriter rewriter(op.getContext());
+  rewriter.setInsertionPoint(op);
+
+  OpFoldResult zero = rewriter.getIndexAttr(0);
+  OpFoldResult one = rewriter.getIndexAttr(1);
+  OpFoldResult four = rewriter.getIndexAttr(4);
+  scf::SCFTilingOptions options;
+  // Loop order: N, F, OW, C, KW.
+  options.setTileSizes({zero, four, four, one, one});
+
+  auto tiled = scf::tileUsingSCF(
+      rewriter, cast<TilingInterface>(op.getOperation()), options);
+  if (failed(tiled))
+    return failure();
+  rewriter.replaceOp(op, tiled->replacements);
+  return success();
+}
+
 static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vectorExt) {
   // Early exit.
   unsigned numLoops = op.getNumLoops();
@@ -108,6 +157,10 @@ static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vect
   }
 
   // Specialized tiling for certain ops
+  if (isa<linalg::Conv2DNchwFchwOp>(op))
+    return tileAndDecomposeConv2D(cast<linalg::Conv2DNchwFchwOp>(op));
+  if (isa<linalg::Conv1DNcwFcwOp>(op))
+    return tileConv1D(cast<linalg::Conv1DNcwFcwOp>(op));
   if (isa<linalg::Mmt4DOp>(op))
     return tileMmt4DOp(cast<linalg::Mmt4DOp>(op), vectorExt, numLoops);
 
