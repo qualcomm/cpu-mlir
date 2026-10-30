@@ -347,7 +347,7 @@ def make_profiled_return(iter_in):
 def parse_return_types(return_type_list):
     return_types = []
     for idx, r in enumerate(return_type_list):
-        rank = None if r[0] == 0 else r[0]
+        rank = 0 if r[0] == 0 else r[0]
         dtype = r[1]
         raw_sizes = list(r[2]) if r[0] > 0 else None
         shape = get_shape(r[2]) if r[0] > 0 else None
