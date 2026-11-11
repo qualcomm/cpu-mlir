@@ -89,6 +89,7 @@ int main(int argc, char **argv) {
 
   // register our passes
   triton::registerTritonARM64MatmulToMmt4D();
+  triton::registerTritonARM64SMEFuncOutline();
   triton::registerTritonARM64LinalgTiling();
   triton::registerTritonARM64LinalgVectorization();
   triton::registerTritonARM64VectorLowering();

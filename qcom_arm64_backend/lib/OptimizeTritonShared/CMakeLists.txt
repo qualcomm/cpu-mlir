@@ -1,5 +1,6 @@
 add_mlir_conversion_library(OptimizeTritonShared
         ARM64MatmulToMmt4DPass.cpp
+        ARM64SMEFuncOutlinePass.cpp
         ARM64TilingPass.cpp
         ARM64VectorizationPass.cpp
         ARM64VectorLoweringPass.cpp
@@ -15,6 +16,7 @@ add_mlir_conversion_library(OptimizeTritonShared
 	OptimizeTritonSharedPassIncGen
 
         LINK_LIBS PUBLIC
+        MLIRValueBoundsOpInterface
         MLIRBufferizationDialect
         MLIRBufferizationPipelines
         MLIRBufferizationTransforms

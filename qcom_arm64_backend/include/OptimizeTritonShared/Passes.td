@@ -73,4 +73,20 @@ def TritonARM64MatmulToMmt4D :
   let constructor = "triton::createTritonARM64MatmulToMmt4DPass()";
 }
 
+def TritonARM64SMEFuncOutline :
+    Pass<"triton-arm64-sme-func-outline", "mlir::ModuleOp"> {
+  let summary = "Outline loop nests that use SME ZA tiles into their own functions";
+  let description = [{
+    The ArmSME streaming pass makes a whole function streaming as soon as it
+    contains one SME op. In a function with other code, such as a whole
+    torch-mlir model, all of it then runs in streaming mode, where NEON
+    instructions are illegal without FEAT_SME_FA64. This pass moves each
+    outermost loop nest that works on ZA tiles (vectors whose two innermost
+    dimensions are scalable) into a new private function and calls it, so that
+    only the new function becomes streaming.
+  }];
+  let constructor = "triton::createTritonARM64SMEFuncOutlinePass()";
+  let dependentDialects = ["mlir::func::FuncDialect", "mlir::LLVM::LLVMDialect"];
+}
+
 #endif

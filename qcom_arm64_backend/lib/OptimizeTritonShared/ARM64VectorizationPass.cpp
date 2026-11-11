@@ -101,6 +101,8 @@ static LogicalResult vectorizeLinalgOp(linalg::LinalgOp op, arm64VectorExtension
   SmallVector<int64_t> vecSizes(numLoops, 1);
   SmallVector<bool> scalableDims(numLoops, false);
   bool assumeDynamicDimsMatchVecSizes = false;
+  // Set by the tiling pass on each tile of a transpose it tiled for SME.
+  auto smeTileSize = op->getAttrOfType<IntegerAttr>(kSMETransposeTileAttr);
   if (isa<linalg::Conv1DNcwFcwOp>(op)) {
     // The preceding Conv2D schedule decomposes one output/filter-height tile
     // to NCW/FCW. Vectorize F and OW as a 4x4 outer product while retaining
@@ -108,6 +110,11 @@ static LogicalResult vectorizeLinalgOp(linalg::LinalgOp op, arm64VectorExtension
     if (numLoops != 5)
       return failure();
     vecSizes = {1, 4, 4, 1, 1};
+  } else if (vectorExt == SME && smeTileSize) {
+    // One [s]x[s] ZA tile per transpose; ArmSME lowers the transposing read
+    // through ZA (rows in as vertical slices, out as horizontal slices).
+    vecSizes[numLoops - 2] = vecSizes[numLoops - 1] = smeTileSize.getInt();
+    scalableDims[numLoops - 2] = scalableDims[numLoops - 1] = true;
   } else if (isa<linalg::MatmulOp>(op) && vectorExt == SME) {
     scalableDims = {true, true, false};
     vecSizes = {8, 8, 2};

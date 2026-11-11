@@ -15,7 +15,7 @@ import torch
 import numpy as np
 from collections import namedtuple
 
-from triton.backends.qcom_arm64_backend.utils import get_env_var, get_exec_mode, get_kernel_name, get_verbose_level, get_work_dir, parse_triton_llvm_kernel_signature, profile_inputs, to_torch_type, split_path
+from triton.backends.qcom_arm64_backend.utils import get_env_var, get_exec_mode, get_kernel_name, get_verbose_level, get_work_dir, is_function_streaming, parse_triton_llvm_kernel_signature, profile_inputs, to_torch_type, split_path
 
 class WrapperStrings:
    def __init__(self):
@@ -142,9 +142,9 @@ class WrapperGenerator:
             1
         )
         self.lowered_by_JIT = lowered_by_JIT
-        self.is_streaming = "aarch64_pstate_sm_enabled" in kernel_llir
         self.input_profs, self.num_input_tensors = profile_inputs(self.inputs, self.lowered_by_JIT)
         self.return_type, self.func_name, self.is_func_ciface = parse_triton_llvm_kernel_signature(kernel_llir, self.num_input_tensors, len(self.inputs), self.lowered_by_JIT)
+        self.is_streaming = is_function_streaming(kernel_llir, self.func_name)
 
 
 

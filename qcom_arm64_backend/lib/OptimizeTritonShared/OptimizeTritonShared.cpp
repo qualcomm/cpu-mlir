@@ -38,6 +38,9 @@ namespace triton {
 
 static void addOptimizationPassesForSME(mlir::OpPassManager &pm) {
   pm.addPass(createCanonicalizerPass());
+  // Keep streaming mode to the ZA loop nests. This must run after the inliner
+  // above and before EnableArmStreamingPass below.
+  pm.addPass(createTritonARM64SMEFuncOutlinePass());
 
   pm.addPass(arm_sme::createVectorLegalizationPass());
   pm.addPass(createConvertVectorToArmSMEPass());

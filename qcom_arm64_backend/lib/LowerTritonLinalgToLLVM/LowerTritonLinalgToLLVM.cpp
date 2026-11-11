@@ -20,7 +20,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/LLVMIR/Transforms/RequestCWrappers.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Pass/Pass.h"
@@ -35,6 +34,23 @@
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
+
+namespace {
+// Like LLVM::createLLVMRequestCWrappersPass, but only for public functions.
+// Private helpers, such as SME code outlined into its own function, are only
+// called from inside the module and need no C interface.
+struct RequestPublicCWrappersPass
+    : public mlir::PassWrapper<RequestPublicCWrappersPass,
+                               mlir::OperationPass<mlir::func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RequestPublicCWrappersPass)
+  void runOnOperation() override {
+    if (getOperation().isPublic())
+      getOperation()->setAttr(
+          mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName(),
+          mlir::UnitAttr::get(&getContext()));
+  }
+};
+} // namespace
 
 namespace mlir {
 namespace triton {
@@ -122,7 +138,7 @@ ModuleOp arm64TritonLinalgToLLVMMLIR(ModuleOp mod, arm64VectorExtension vec_ext,
   prof_options.prof_loop_depth = std::stoi(prof_options_map.at("prof_loop_depth"));
 
   if (doesFuncReturnValue(mod))
-    pm.addNestedPass<func::FuncOp>(LLVM::createLLVMRequestCWrappersPass());
+    pm.addNestedPass<func::FuncOp>(std::make_unique<RequestPublicCWrappersPass>());
   addTritonLinalgToLLVMPasses(pm, vec_ext, prof_options, debug_mode);
 
   enablePrintIR(pm, debug_mode);
@@ -165,7 +181,7 @@ public:
         std::stoi(prof_options_map.at("prof_loop_depth"));
 
     if (doesReturnValue)
-      addNestedPass<func::FuncOp>(LLVM::createLLVMRequestCWrappersPass());
+      addNestedPass<func::FuncOp>(std::make_unique<RequestPublicCWrappersPass>());
     addTritonLinalgToLLVMPasses(*this, vec_ext, prof_options, debug_mode);
 
     // Pass ownership to the PassManager; results are written into moduleSink.

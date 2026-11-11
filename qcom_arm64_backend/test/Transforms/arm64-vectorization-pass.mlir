@@ -210,3 +210,32 @@ func.func @test_conv1d_outer_product(%input: tensor<1x3x6xf32>,
     outs(%output : tensor<1x4x4xf32>) -> tensor<1x4x4xf32>
   return %0 : tensor<1x4x4xf32>
 }
+
+// A transpose tile marked by the tiling pass is read with a transposing, masked
+// transfer_read into one [4]x[4] (f32) or [8]x[8] (f16) ZA tile.
+// CHECK-SME-LABEL: func.func @test_transpose_tile
+// CHECK-SME:       [[MASK:%.+]] = vector.create_mask {{.+}} : vector<1x1x[4]x[4]xi1>
+// CHECK-SME:       [[TILE:%.+]] = vector.mask [[MASK]] { vector.transfer_read {{.+}} permutation_map = {{.+}} : tensor<1x1x?x?xf32>, vector<1x1x[4]x[4]xf32> }
+// CHECK-SME:       vector.transfer_write [[TILE]], {{.+}} : vector<1x1x[4]x[4]xf32>, tensor<1x1x?x?xf32>
+// CHECK-SME-NOT:   linalg.transpose
+func.func @test_transpose_tile(%arg0: tensor<1x1x?x?xf32>, %arg1: tensor<1x1x?x?xf32>) -> tensor<1x1x?x?xf32> {
+  %0 = linalg.transpose ins(%arg0 : tensor<1x1x?x?xf32>) outs(%arg1 : tensor<1x1x?x?xf32>) permutation = [0, 1, 3, 2] {arm64.sme_transpose_tile = 4 : i64}
+  return %0 : tensor<1x1x?x?xf32>
+}
+
+// CHECK-SME-LABEL: func.func @test_transpose_tile_f16
+// CHECK-SME:       vector.transfer_read {{.+}} permutation_map = {{.+}} : tensor<?x?xf16>, vector<[8]x[8]xf16>
+// CHECK-SME-NOT:   linalg.transpose
+func.func @test_transpose_tile_f16(%arg0: tensor<?x?xf16>, %arg1: tensor<?x?xf16>) -> tensor<?x?xf16> {
+  %0 = linalg.transpose ins(%arg0 : tensor<?x?xf16>) outs(%arg1 : tensor<?x?xf16>) permutation = [1, 0] {arm64.sme_transpose_tile = 8 : i64}
+  return %0 : tensor<?x?xf16>
+}
+
+// Without the mark (a transpose too small for SME) no ZA tile is formed.
+// CHECK-SME-LABEL: func.func @test_transpose_tile_unmarked
+// CHECK-SME-NOT:   vector<[4]x[4]xf32>
+// CHECK-SME:       return
+func.func @test_transpose_tile_unmarked(%arg0: tensor<1x?xf32>, %arg1: tensor<?x1xf32>) -> tensor<?x1xf32> {
+  %0 = linalg.transpose ins(%arg0 : tensor<1x?xf32>) outs(%arg1 : tensor<?x1xf32>) permutation = [1, 0]
+  return %0 : tensor<?x1xf32>
+}

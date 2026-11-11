@@ -17,7 +17,7 @@ import subprocess
 from torch import Tensor  # For type annotations
 from triton._C.libtriton import qcom_arm64_backend, ir
 
-from triton.backends.qcom_arm64_backend.utils import get_work_dir, profile_torch_mlir_inputs, parse_return_types, get_verbose_level, get_debug_mode, get_codegen_options, ctype_to_torch_type
+from triton.backends.qcom_arm64_backend.utils import get_work_dir, profile_torch_mlir_inputs, parse_return_types, is_function_streaming, get_verbose_level, get_debug_mode, get_codegen_options, ctype_to_torch_type
 from triton.backends.qcom_arm64_backend.driver import ARM64TorchLauncher
 from triton.backends.qcom_arm64_backend.compiler import ARM64CPUOptions
 from triton.backends.qcom_arm64_backend.launcher_host import generate_torch_mlir_host_launcher
@@ -58,7 +58,7 @@ class ARM64HostTorchLauncher(ARM64TorchLauncher):
 
         with open(llir_path, 'r') as f:
             llir = f.read()
-        is_streaming = "aarch64_pstate_sm_enabled" in llir
+        is_streaming = is_function_streaming(llir, f"_mlir_ciface_{self.kernel_name}")
 
         launcher_src = generate_torch_mlir_host_launcher(self.input_profs, self.return_types, self.kernel_name, is_streaming)
         launch = compile_module(launcher_src, self.kernel_name)

@@ -32,9 +32,11 @@ def get_work_dir() -> str:
     return _work_dir
 
 def get_kernel_name(ir:str) -> str:
-    # find kernel name in mlir
-    mlir_pattern = r".+\.func .*@(\w+)\(.+"
-    mlir_matches = re.findall(mlir_pattern, ir)
+    # find kernel name in mlir; skip private/internal helpers, e.g. SME code
+    # outlined into its own function
+    mlir_pattern = r".+\.func ([^@]*)@(\w+)\(.+"
+    mlir_matches = [name for qualifiers, name in re.findall(mlir_pattern, ir)
+                    if not re.search(r"\b(private|internal)\b", qualifiers)]
     if len(mlir_matches) == 1:
         return mlir_matches[0]
     else:
@@ -219,8 +221,23 @@ def profile_inputs(inputs, lowered_by_JIT):
             raise ValueError(f"Unsupported input type {type(inp.__name__)}")
     return profiled, tensor_index
 
+def is_function_streaming(llir, func_name):
+    """Whether `func_name` in the LLVM IR `llir` runs in streaming mode.
+
+    Only the attributes of that function count: SME code is outlined into
+    private streaming functions that the entry function calls normally.
+    """
+    # e.g. `define void @k(...) local_unnamed_addr #3 {`
+    define = re.search(rf"^define [^@]*@{re.escape(func_name)}\(.*\)([^{{\n]*){{", llir, re.M)
+    group = define and re.search(r"#\d+", define.group(1))
+    if not group:
+        return False
+    attrs = re.search(rf"^attributes {group.group(0)} = {{(.*)}}", llir, re.M)
+    return bool(attrs) and "aarch64_pstate_sm_enabled" in attrs.group(1)
+
 def parse_triton_llvm_kernel_signature(llir, num_input_tensors, num_inputs, lowered_by_JIT):
-    pattern = r"define (.+) @(\w+)\((.+)\)"
+    # Skip internal functions, e.g. SME code outlined into its own function.
+    pattern = r"define (?!internal |private )(.+) @(\w+)\((.+)\)"
     matches = re.findall(pattern, llir)
 
     # All IR lowered by torch-mlir will have an additional c interfance function

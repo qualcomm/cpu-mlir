@@ -20,6 +20,7 @@
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
 #include "mlir/Interfaces/TilingInterface.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -98,6 +99,91 @@ static LogicalResult tileMmt4DOp(linalg::Mmt4DOp op, arm64VectorExtension vector
   return success();
 }
 
+// If `op` swaps its two innermost dimensions and its element type fits an SME
+// ZA tile, returns the tile size per vscale (128 / element bits, e.g. 4 for f32
+// and 8 for f16). Otherwise returns 0.
+static int64_t getSMETransposeTileSize(linalg::TransposeOp op) {
+  // The permutation must be [0, 1, ..., rank-3, rank-1, rank-2]: the outer
+  // dimensions stay in place and only the last two are swapped. Then every
+  // [s]x[s] tile is a plain 2-D transpose of rows that are contiguous in
+  // memory. A permutation that keeps the innermost dimension in place (e.g.
+  // [0, 2, 1, 3]) only moves whole rows and needs no ZA tile.
+  ArrayRef<int64_t> perm = op.getPermutation();
+  int64_t rank = perm.size();
+  if (rank < 2 || perm[rank - 1] != rank - 2 || perm[rank - 2] != rank - 1)
+    return 0;
+  for (int64_t i = 0; i < rank - 2; ++i)
+    if (perm[i] != i)
+      return 0;
+  Type elemType = op.getInit().getType().getElementType();
+  if (!elemType.isIntOrFloat())
+    return 0;
+  unsigned bits = elemType.getIntOrFloatBitWidth();
+  if (bits != 8 && bits != 16 && bits != 32 && bits != 64)
+    return 0;
+  return 128 / bits;
+}
+
+// Tile the two innermost (swapped) dimensions of a transpose to one SME ZA
+// tile, [s]x[s], and all outer dimensions to 1. Vectorization then reads each
+// tile with a transposing transfer_read, which ArmSME lowers to rows written
+// into ZA as vertical slices and stored back horizontally.
+static LogicalResult tileTransposeForSME(linalg::TransposeOp op,
+                                         int64_t tileSize) {
+  IRRewriter rewriter(op.getContext());
+  rewriter.setInsertionPoint(op);
+  Location loc = op.getLoc();
+
+  Value vscale =
+      vector::VectorScaleOp::create(rewriter, loc, rewriter.getIndexType());
+  Value size = arith::ConstantIndexOp::create(rewriter, loc, tileSize);
+  OpFoldResult scaled = arith::MulIOp::create(rewriter, loc, size, vscale).getResult();
+
+  unsigned numLoops = op.getNumLoops();
+  SmallVector<OpFoldResult> tileSizes(numLoops, rewriter.getIndexAttr(1));
+  tileSizes[numLoops - 2] = scaled;
+  tileSizes[numLoops - 1] = scaled;
+
+  scf::SCFTilingOptions options;
+  options.setTileSizes(tileSizes);
+  auto tiled = scf::tileUsingSCF(
+      rewriter, cast<TilingInterface>(op.getOperation()), options);
+  if (failed(tiled))
+    return failure();
+  for (Operation *tiledOp : tiled->tiledOps)
+    tiledOp->setAttr(kSMETransposeTileAttr,
+                     rewriter.getI64IntegerAttr(tileSize));
+  rewriter.replaceOp(op, tiled->replacements);
+  return success();
+}
+
+// Whether a transpose is large enough for the ZA tile path to pay off. A
+// dynamic dimension counts with its constant upper bound, e.g. the masked block
+// of a Triton kernel: tl.trans of a 1024x512 block whose edge is masked becomes
+// a transpose of an extract_slice with sizes min(.., 1024) x min(.., 512).
+// Every program instance runs the same code, so the block size decides. A
+// dimension without a known bound keeps the regular path.
+static bool isLargeEnoughForSMETranspose(linalg::TransposeOp op) {
+  Value init = op.getInit();
+  auto type = cast<ShapedType>(init.getType());
+  int64_t numElements = 1;
+  for (int64_t dim = 0; dim < type.getRank(); ++dim) {
+    int64_t size = type.getDimSize(dim);
+    if (ShapedType::isDynamic(size)) {
+      ValueBoundsOptions options;
+      options.closedUB = true;
+      FailureOr<int64_t> bound = ValueBoundsConstraintSet::computeConstantBound(
+          presburger::BoundType::UB, {init, dim}, /*stopCondition=*/nullptr,
+          options);
+      if (failed(bound))
+        return false;
+      size = *bound;
+    }
+    numElements *= size;
+  }
+  return numElements >= kSMETransposeMinElements;
+}
+
 // Tile height dimensions, OH and KH, then decompose NCHW/FCHW convolution to
 // NCW/FCW.
 static LogicalResult tileAndDecomposeConv2D(linalg::Conv2DNchwFchwOp op) {
@@ -163,6 +249,12 @@ static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vect
     return tileConv1D(cast<linalg::Conv1DNcwFcwOp>(op));
   if (isa<linalg::Mmt4DOp>(op))
     return tileMmt4DOp(cast<linalg::Mmt4DOp>(op), vectorExt, numLoops);
+  if (vectorExt == SME && isa<linalg::TransposeOp>(op)) {
+    auto transposeOp = cast<linalg::TransposeOp>(op);
+    if (isLargeEnoughForSMETranspose(transposeOp))
+      if (int64_t tileSize = getSMETransposeTileSize(transposeOp))
+        return tileTransposeForSME(transposeOp, tileSize);
+  }
 
   linalg::LinalgOp tilingTarget = op;
   linalg::LinalgTilingOptions tileOption;
