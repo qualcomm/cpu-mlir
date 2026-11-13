@@ -23,10 +23,11 @@ func.func @test_elementwise_add(%arg0: tensor<128xf32>,
   return %0 : tensor<128xf32>
 }
 
+// Reductions get two SVE registers' worth per iteration: 8 x vscale.
 // CHECK-LABEL: func.func @test_reduce
 // CHECK: [[VSCALE:%.+]] = vector.vscale
-// CHECK: [[CONST4:%.+]] = arith.constant 4 : index
-// CHECK: [[STEP_S:%.+]] = arith.muli [[CONST4]], [[VSCALE]]
+// CHECK: [[CONST8:%.+]] = arith.constant 8 : index
+// CHECK: [[STEP_S:%.+]] = arith.muli [[CONST8]], [[VSCALE]]
 // CHECK: scf.for {{.+}} step [[STEP_S]]
 func.func @test_reduce(%arg0: tensor<128xf32>,
                         %arg1: tensor<f32>) -> tensor<f32> {
@@ -110,13 +111,17 @@ func.func @test_elementwise_2d(%arg0: tensor<32x128xf32>,
   return %0 : tensor<32x128xf32>
 }
 
-// CHECK-LABEL: func.func @test_generic_no_scalable
-// CHECK-NOT:   vector.vscale
-// CHECK:       arith.constant 1 : index
-// CHECK:       arith.constant 8 : index
-// CHECK:       scf.for
-// CHECK:       scf.for
-func.func @test_generic_no_scalable(%arg0: tensor<64x64xf32>,
+// A linalg.generic whose innermost loop is its reduction (torch-mlir's form
+// of a row sum or max) is tiled like linalg.reduce: rows by 1, the reduction
+// by 8 x vscale.
+// CHECK-LABEL: func.func @test_generic_innermost_reduction
+// CHECK:       [[VSCALE:%.+]] = vector.vscale
+// CHECK:       [[CONST8:%.+]] = arith.constant 8 : index
+// CHECK:       [[STEP_S:%.+]] = arith.muli [[CONST8]], [[VSCALE]]
+// CHECK:       scf.for {{.+}} to %c64{{.*}} step %c1
+// CHECK:         scf.for {{.+}} to %c64{{.*}} step [[STEP_S]]
+// CHECK:           linalg.generic {{.+}} iterator_types = ["parallel", "reduction"]{{.+}} ins({{.+}} : tensor<1x?xf32>)
+func.func @test_generic_innermost_reduction(%arg0: tensor<64x64xf32>,
                                      %arg1: tensor<64xf32>) -> tensor<64xf32> {
   %0 = linalg.generic {
     indexing_maps = [
@@ -269,4 +274,32 @@ func.func @test_transpose_unbounded_dynamic(%arg0: tensor<?x?xf32>, %arg1: tenso
 func.func @test_transpose_outer_dims(%arg0: tensor<1x1024x12x64xf16>, %arg1: tensor<1x12x1024x64xf16>) -> tensor<1x12x1024x64xf16> {
   %0 = linalg.transpose ins(%arg0 : tensor<1x1024x12x64xf16>) outs(%arg1 : tensor<1x12x1024x64xf16>) permutation = [0, 2, 1, 3]
   return %0 : tensor<1x12x1024x64xf16>
+}
+
+// A copy between dynamically shaped, strided buffers (triton-shared's masked
+// tl.load) would be lowered to a call to the element-by-element memrefCopy
+// runtime function: it becomes a linalg.copy tiled to 4 x vscale, which the
+// vectorizer turns into masked vector loads and stores.
+// CHECK-SME-LABEL: func.func @test_strided_copy
+// CHECK-SME-NOT:   memref.copy
+// CHECK-SME:       [[VSCALE:%.+]] = vector.vscale
+// CHECK-SME:       [[STEP:%.+]] = arith.muli %c4{{.*}}, [[VSCALE]] : index
+// CHECK-SME:       scf.for {{.+}} step [[STEP]]
+// CHECK-SME:         linalg.copy ins({{.+}} : memref<?xf32, strided<[1], offset: ?>>) outs({{.+}} : memref<?xf32, strided<[1], offset: ?>>)
+func.func @test_strided_copy(%src: memref<1024xf32, strided<[1], offset: ?>>, %n: index) {
+  %buf = memref.alloc() : memref<1024xf32>
+  %s = memref.subview %src[0] [%n] [1] : memref<1024xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+  %d = memref.subview %buf[0] [%n] [1] : memref<1024xf32> to memref<?xf32, strided<[1]>>
+  memref.copy %s, %d : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1]>>
+  memref.dealloc %buf : memref<1024xf32>
+  return
+}
+
+// A copy that lowers to a plain memcpy (identity layout) is left alone.
+// CHECK-SME-LABEL: func.func @test_contiguous_copy
+// CHECK-SME:       memref.copy %{{.+}}, %{{.+}} : memref<1024xf32> to memref<1024xf32>
+// CHECK-SME-NOT:   linalg.copy
+func.func @test_contiguous_copy(%src: memref<1024xf32>, %dst: memref<1024xf32>) {
+  memref.copy %src, %dst : memref<1024xf32> to memref<1024xf32>
+  return
 }

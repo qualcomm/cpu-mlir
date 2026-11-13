@@ -22,6 +22,7 @@ add_mlir_conversion_library(OptimizeTritonShared
         MLIRBufferizationTransforms
         MLIRIR
         MLIRMemRefDialect
+        MLIRMemRefUtils
         MLIRLinalgDialect
         MLIRLinalgTransforms
         MLIRPass

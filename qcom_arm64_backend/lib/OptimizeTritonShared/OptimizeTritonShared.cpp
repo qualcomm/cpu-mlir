@@ -18,7 +18,9 @@
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Affine/Transforms/Passes.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Pass/Pass.h"
@@ -35,6 +37,31 @@ namespace triton {
 
 #define GEN_PASS_DEF_ARM64OPTIMIZETRITONSHARED
 #include "OptimizeTritonShared/Passes.h.inc"
+
+// Like affine::createLoopCoalescingPass, but leaves loop nests that contain a
+// reduction alone. Coalescing the parallel loop with the reduction loop makes
+// the accumulator's address change in every iteration, so the vector lowering
+// can no longer keep it in a register: it is loaded and stored per vector.
+struct CoalesceNonReductionLoopsPass
+    : public PassWrapper<CoalesceNonReductionLoopsPass,
+                         OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CoalesceNonReductionLoopsPass)
+  StringRef getArgument() const override {
+    return "triton-arm64-coalesce-non-reduction-loops";
+  }
+  void runOnOperation() override {
+    getOperation().walk<WalkOrder::PreOrder>([](scf::ForOp loop) {
+      bool hasReduction =
+          loop->walk([](Operation *op) {
+                return isa<linalg::ReduceOp>(op) || isInnermostReduction(op)
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
+              }).wasInterrupted();
+      if (!hasReduction)
+        (void)coalescePerfectlyNestedSCFForLoops(loop);
+    });
+  }
+};
 
 static void addOptimizationPassesForSME(mlir::OpPassManager &pm) {
   pm.addPass(createCanonicalizerPass());
@@ -109,7 +136,7 @@ void addOptimizeTritonSharedPasses(mlir::OpPassManager &pm,
   pm.addNestedPass<func::FuncOp>(createTritonARM64BubbleUpExtractSlicePass());
   pm.addPass(createTritonARM64MatmulToMmt4DPass());
   pm.addPass(createTritonARM64LinalgTilingPass({vec_ext}));
-  pm.addNestedPass<func::FuncOp>(affine::createLoopCoalescingPass());
+  pm.addNestedPass<func::FuncOp>(std::make_unique<CoalesceNonReductionLoopsPass>());
   pm.addPass(createTritonARM64LinalgVectorizationPass({vec_ext}));
   pm.addPass(bufferization::createEmptyTensorEliminationPass());
   pm.addPass(createTritonARM64VectorLoweringPass({vec_ext}));

@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
+#include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/Interfaces/TilingInterface.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 
@@ -234,9 +235,11 @@ static LogicalResult tileConv1D(linalg::Conv1DNcwFcwOp op) {
 }
 
 static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vectorExt) {
-  // Early exit.
+  // Early exit. Besides tensor ops, copies between buffers are tiled: they are
+  // the memref.copy ops rewritten by convertStridedCopiesToLinalg.
   unsigned numLoops = op.getNumLoops();
-  if (!op.hasPureTensorSemantics() || !op->getNumResults() ||
+  bool isBufferCopy = isa<linalg::CopyOp>(op) && op.hasPureBufferSemantics();
+  if ((!isBufferCopy && (!op.hasPureTensorSemantics() || !op->getNumResults())) ||
       !isa<DestinationStyleOpInterface>(op.getOperation()) || numLoops < 1) {
     DBG("-> tiling aborted. constraints not satisfied");
     return failure();
@@ -267,7 +270,7 @@ static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vect
   bool lastTileSizeScalable = vectorExt != NEON &&
       (linalg::isElementwise(op) || isa<linalg::ReduceOp>(op) ||
       isa<linalg::MatvecOp>(op) || isa<linalg::MatmulOp>(op) ||
-      isa<linalg::Mmt4DOp>(op));
+      isa<linalg::Mmt4DOp>(op) || isInnermostReduction(op));
 
   if (lastTileSizeScalable) {
     tileOption.setTileSizeComputationFunction([&, tileSizes](OpBuilder &b,
@@ -288,7 +291,8 @@ static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vect
       } else {
         for (int i = 0; i < numLoops - 1; ++i)
           sizes.push_back(b.create<arith::ConstantIndexOp>(Loc, tileSizes[i]));
-        auto val = b.create<arith::ConstantIndexOp>(Loc, 4);
+        auto val = b.create<arith::ConstantIndexOp>(
+            Loc, getScalableVectorSize(op));
         sizes.push_back(b.create<arith::MulIOp>(Loc, val, vscale).getResult());
       }
       return sizes;
@@ -310,6 +314,35 @@ static LogicalResult tileLinalgOp(linalg::LinalgOp op, arm64VectorExtension vect
   return success();
 }
 
+// memref.copy between dynamically shaped, strided buffers, such as the masked
+// tl.load of triton-shared (a subview of the input copied into a subview of a
+// local buffer), is lowered to a call to the generic memrefCopy runtime
+// function, which walks the elements one by one. As a linalg.copy it is tiled
+// and vectorized like any elementwise op. Copies that lower to a plain memcpy
+// (identity layout or static contiguous shape) are left alone.
+static void convertStridedCopiesToLinalg(ModuleOp module) {
+  auto lowersToMemcpy = [](MemRefType type) {
+    return type.getLayout().isIdentity() ||
+           (type.hasStaticShape() && type.getNumElements() > 0 &&
+            memref::isStaticShapeAndContiguousRowMajor(type));
+  };
+  SmallVector<memref::CopyOp> copies;
+  module.walk([&](memref::CopyOp copy) {
+    auto source = dyn_cast<MemRefType>(copy.getSource().getType());
+    auto target = dyn_cast<MemRefType>(copy.getTarget().getType());
+    if (source && target && source.getRank() > 0 &&
+        source.getElementType() == target.getElementType() &&
+        !(lowersToMemcpy(source) && lowersToMemcpy(target)))
+      copies.push_back(copy);
+  });
+  IRRewriter rewriter(module.getContext());
+  for (memref::CopyOp copy : copies) {
+    rewriter.setInsertionPoint(copy);
+    rewriter.replaceOpWithNewOp<linalg::CopyOp>(copy, copy.getSource(),
+                                                copy.getTarget());
+  }
+}
+
 struct TritonARM64LinalgTilingPass
     : public ::impl::TritonARM64LinalgTilingBase<TritonARM64LinalgTilingPass> {
   TritonARM64LinalgTilingPass() = default;
@@ -318,11 +351,14 @@ struct TritonARM64LinalgTilingPass
       : TritonARM64LinalgTilingBase(options) {}
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<func::FuncDialect, vector::VectorDialect>();
+    registry.insert<func::FuncDialect, vector::VectorDialect,
+                    linalg::LinalgDialect, scf::SCFDialect,
+                    arith::ArithDialect>();
   }
 
   void runOnOperation() override {
     auto moduleOp = getOperation();
+    convertStridedCopiesToLinalg(moduleOp);
     moduleOp.walk([&](linalg::LinalgOp op) {
       DBG(" tiling candidate: " << op << "\n");
       if (succeeded(tileLinalgOp(op, vectorExt)))
@@ -336,6 +372,14 @@ struct TritonARM64LinalgTilingPass
 };
 
 } // namespace
+
+bool triton::isInnermostReduction(Operation *op) {
+  auto genericOp = dyn_cast<linalg::GenericOp>(op);
+  if (!genericOp || genericOp.getNumReductionLoops() != 1)
+    return false;
+  return genericOp.getIteratorTypesArray().back() ==
+         utils::IteratorType::reduction;
+}
 
 std::unique_ptr<OperationPass<ModuleOp>>
 triton::createTritonARM64LinalgTilingPass(const TritonARM64LinalgTilingOptions &options) {

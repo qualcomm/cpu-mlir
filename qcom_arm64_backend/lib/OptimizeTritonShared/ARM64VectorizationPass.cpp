@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
@@ -51,6 +52,29 @@ static LogicalResult vectorizeLinalgOp(linalg::LinalgOp op, arm64VectorExtension
   }
   IRRewriter rewriter(op.getContext());
 
+  // A reduction tile with leading unit dims (torch-mlir's softmax max and sum,
+  // e.g. tensor<1x1x?xf32> -> tensor<1x1xf32>) is first rewritten without
+  // them. Vectorized as is, it becomes a masked vector.multi_reduction on
+  // vector<1x1x[4]xf32>, whose flattening drops the scalable flag from the mask
+  // (upstream FlattenMultiReduction). The 1-D form vectorizes like
+  // linalg.reduce and needs no flattening.
+  if (vectorExt != NEON && isInnermostReduction(op) &&
+      op.hasPureTensorSemantics()) {
+    rewriter.setInsertionPoint(op);
+    // Rank-reducing slices, not reshapes: a collapse_shape of the strided tile
+    // bufferizes to a memref with an unknown stride, which is then read one
+    // element at a time.
+    linalg::ControlDropUnitDims options;
+    options.rankReductionStrategy =
+        linalg::ControlDropUnitDims::RankReductionStrategy::ExtractInsertSlice;
+    FailureOr<linalg::DropUnitDimsResult> dropped = linalg::dropUnitDims(
+        rewriter, cast<linalg::GenericOp>(op), options);
+    if (succeeded(dropped)) {
+      rewriter.replaceOp(op, dropped->replacements);
+      op = cast<linalg::LinalgOp>(dropped->resultOp.getOperation());
+    }
+  }
+
   auto numLoops = op.getNumLoops();
   if (numLoops < 1) {
     return failure();
@@ -63,6 +87,7 @@ static LogicalResult vectorizeLinalgOp(linalg::LinalgOp op, arm64VectorExtension
   bool useScalableVector = ShapedType::isDynamic(innerLoopDim) &&
       (vectorExt != NEON) &&
       (linalg::isElementwise(op) || isa<linalg::ReduceOp>(op) ||
+       isInnermostReduction(op) ||
        isa<linalg::MatvecOp>(op) || isa<linalg::MatmulOp>(op));
 
   // masked.load/store of i1 vectors is not legal on aarch64; skip
@@ -125,7 +150,8 @@ static LogicalResult vectorizeLinalgOp(linalg::LinalgOp op, arm64VectorExtension
     // semantics, so we can assume the dims will match vec sizes.
     assumeDynamicDimsMatchVecSizes = true;
   } else {
-    vecSizes[innermostDim] = useScalableVector ? 4 : innerLoopDim;
+    vecSizes[innermostDim] =
+        useScalableVector ? getScalableVectorSize(op) : innerLoopDim;
     scalableDims[innermostDim] = useScalableVector ? true : false;
     DBG("Vector size: " << vecSizes[innermostDim] << '\n');
     DBG("Scalable: " << scalableDims[innermostDim] << '\n');

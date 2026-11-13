@@ -11,6 +11,7 @@
 #define TRITON_ARM64_OPTIMIZE_TRITON_SHARED_H
 #include "common.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Pass/Pass.h"
@@ -32,6 +33,18 @@ std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64VectorLoweringPass(
 );
 std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64MatmulToMmt4DPass();
 std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64SMEFuncOutlinePass();
+
+// Whether `op` is a linalg.generic whose only reduction loop is the innermost
+// one, as torch-mlir emits for the max and sum of a softmax. Tiling and
+// vectorization treat it like linalg.reduce: scalable innermost dimension.
+bool isInnermostReduction(Operation *op);
+
+// Scalable vector size (per vscale) of the innermost dimension: two SVE
+// registers' worth for reductions, which halves their loop trip count and
+// horizontal reductions; one register otherwise.
+inline int64_t getScalableVectorSize(Operation *op) {
+  return isa<linalg::ReduceOp>(op) || isInnermostReduction(op) ? 8 : 4;
+}
 
 std::unique_ptr<OperationPass<func::FuncOp>> createTritonARM64RVOPass();
 
