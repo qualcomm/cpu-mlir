@@ -140,6 +140,7 @@ void addOptimizeTritonSharedPasses(mlir::OpPassManager &pm,
   pm.addPass(createTritonARM64LinalgVectorizationPass({vec_ext}));
   pm.addPass(bufferization::createEmptyTensorEliminationPass());
   pm.addPass(createTritonARM64VectorLoweringPass({vec_ext}));
+  pm.addPass(createTritonARM64ReductionSchedulingPass({vec_ext}));
   // The vector lowering pass bufferizes, but bufferization never frees what it
   // allocates, so every program instance leaked its temporaries. This must run
   // while loops are still structured (SME lowers them to cf below).

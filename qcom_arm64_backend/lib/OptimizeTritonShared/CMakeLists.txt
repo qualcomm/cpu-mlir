@@ -4,6 +4,7 @@ add_mlir_conversion_library(OptimizeTritonShared
         ARM64TilingPass.cpp
         ARM64VectorizationPass.cpp
         ARM64VectorLoweringPass.cpp
+        ARM64ReductionSchedulingPass.cpp
         BubbleUpExtractSlicePass.cpp
         OptimizeTritonShared.cpp
         PuntBufferPass.cpp

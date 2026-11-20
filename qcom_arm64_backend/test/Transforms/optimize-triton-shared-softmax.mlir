@@ -14,8 +14,8 @@
 // CHECK:         scf.for {{.+}} iter_args({{.+}}) -> (vector<1xf32>)
 // CHECK:         vector.mask %{{.+}} { vector.reduction <maximumf>, %{{.+}}, %{{.+}} : vector<[8]xf32> into f32 } : vector<[8]xi1> -> f32
 // CHECK:         math.exp %{{.+}} : vector<[4]xf32>
-// CHECK:         scf.for {{.+}} iter_args({{.+}}) -> (vector<1xf32>)
-// CHECK:         vector.mask %{{.+}} { vector.reduction <add>, %{{.+}}, %{{.+}} : vector<[8]xf32> into f32 } : vector<[8]xi1> -> f32
+// CHECK:         scf.for {{.+}} iter_args({{.+}}) -> (vector<1xf32>, vector<1xf32>, vector<1xf32>, vector<1xf32>)
+// CHECK:         vector.mask %{{.+}} { vector.reduction <add>, %{{.+}}, %{{.+}} fastmath<reassoc> : vector<[8]xf32> into f32 } : vector<[8]xi1> -> f32
 // CHECK:         arith.divf %{{.+}}, %{{.+}} : vector<[4]xf32>
 // CHECK-NOT:     memref.load
 // CHECK:         return
@@ -75,8 +75,8 @@ module {
 // CHECK:         vector.transfer_read {{.+}} : memref<?xf32, strided<[1], offset: ?>>, vector<[4]xf32>
 // CHECK:         scf.for {{.+}} iter_args({{.+}}) -> (vector<1xf32>)
 // CHECK:         vector.mask %{{.+}} { vector.reduction <maxnumf>, %{{.+}}, %{{.+}} : vector<[8]xf32> into f32 } : vector<[8]xi1> -> f32
-// CHECK:         scf.for {{.+}} iter_args({{.+}}) -> (vector<1xf32>)
-// CHECK:         vector.mask %{{.+}} { vector.reduction <add>, %{{.+}}, %{{.+}} : vector<[8]xf32> into f32 } : vector<[8]xi1> -> f32
+// CHECK:         scf.for {{.+}} iter_args({{.+}}) -> (vector<1xf32>, vector<1xf32>, vector<1xf32>, vector<1xf32>)
+// CHECK:         vector.mask %{{.+}} { vector.reduction <add>, %{{.+}}, %{{.+}} fastmath<reassoc> : vector<[8]xf32> into f32 } : vector<[8]xi1> -> f32
 // CHECK-NOT:     memref.copy
 // CHECK:         return
 #map = affine_map<(d0) -> (d0)>

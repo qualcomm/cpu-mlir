@@ -31,6 +31,9 @@ std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64LinalgVectorizationPas
 std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64VectorLoweringPass(
     const TritonARM64VectorLoweringOptions &options = TritonARM64VectorLoweringOptions()
 );
+std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64ReductionSchedulingPass(
+    const TritonARM64ReductionSchedulingOptions &options =
+        TritonARM64ReductionSchedulingOptions());
 std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64MatmulToMmt4DPass();
 std::unique_ptr<OperationPass<ModuleOp>> createTritonARM64SMEFuncOutlinePass();
 

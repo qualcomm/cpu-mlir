@@ -93,6 +93,7 @@ int main(int argc, char **argv) {
   triton::registerTritonARM64LinalgTiling();
   triton::registerTritonARM64LinalgVectorization();
   triton::registerTritonARM64VectorLowering();
+  triton::registerTritonARM64ReductionScheduling();
   triton::registerTritonARM64ProfPass();
   triton::registerTritonARM64MathApproximation();
   triton::registerTritonARM64RVO();

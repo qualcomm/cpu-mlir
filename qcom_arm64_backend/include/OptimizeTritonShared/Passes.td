@@ -48,6 +48,13 @@ def TritonARM64VectorLowering :
   let constructor = "triton::createTritonARM64VectorLoweringPass()";
 }
 
+def TritonARM64ReductionScheduling :
+    Pass<"triton-arm64-reduction-scheduling", "mlir::ModuleOp"> {
+  let summary = "Break scalable-vector reduction accumulator dependencies";
+  let options = [VectorExt];
+  let constructor = "triton::createTritonARM64ReductionSchedulingPass()";
+}
+
 def TritonARM64RVO :
     Pass<"triton-arm64-rvo", "func::FuncOp"> {
   let summary = "Hoist output reinterpret_cast early to enable output copy elision in bufferization";
