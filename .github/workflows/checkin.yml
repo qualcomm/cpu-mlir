@@ -1,0 +1,154 @@
+name: Checkin CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_call:
+    inputs:
+      repo_name:
+        required: true
+        type: string
+      pr_branch:
+        required: true
+        type: string
+      compiler:
+        required: true
+        type: string
+
+jobs:
+  build-test:
+
+    runs-on: [ self-hosted ]
+
+    permissions:
+      contents: write
+      statuses: write
+
+    steps:
+
+      - name: Hard clean workspace
+        if: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Cleaning workspace: $GITHUB_WORKSPACE"
+          rm -rf "$GITHUB_WORKSPACE"/*
+          rm -rf "$GITHUB_WORKSPACE"/.git || true
+
+      - name: Checkout repo
+        if: true
+        uses: actions/checkout@v4
+        with:
+          path: cpu-mlir
+          clean: true
+          fetch-depth: 0
+          submodules: recursive
+          ref: ${{ inputs.pr_branch }}
+
+      - name: Init submodules and apply patches
+        if: true
+        working-directory: ${{ github.workspace }}/cpu-mlir
+        run: |
+          set -ex
+          git submodule update --init --recursive
+          cd triton
+          git checkout $(cat ../triton-shared/triton-hash.txt)
+          git apply < ../patches/Triton-Add-ARM64-Backend.patch
+          git apply < ../patches/triton_host_build.patch
+          cd -
+          cd triton-shared
+          git apply < ../patches/triton_shared_host_build.patch
+          cd -
+
+      - name: Create venv and install requirements
+        if: true
+        working-directory: ${{ github.workspace }}/cpu-mlir
+        run: |
+          set -ex
+          rm -rf .venv
+          ./scripts/setup_venv_and_python_reqs.sh
+          source .venv/bin/activate
+
+      - name: Build Triton with ARM64 backend
+        if: true
+        id: build
+        working-directory: ${{ github.workspace }}/cpu-mlir
+        env:
+          HOST_LLVM: /local/mnt/workspace/llvm_host/LLVM-22.1.8-Linux-X64
+          TARGET_LLVM: /local/mnt/workspace/llvm-b010a18d-for-triton-Aug-19-2026
+        run: |
+          set -ex
+          source .venv/bin/activate
+          ./scripts/build.sh $HOST_LLVM $TARGET_LLVM
+
+      - name: ARM64 backend LIT tests
+        if: true
+        working-directory: ${{ github.workspace }}/cpu-mlir
+        run: |
+          set -ex
+          source .venv/bin/activate
+          TRITON_BUILD=$(ls -d triton/build/cmake.linux-x86_64-cpython-* | head -1)
+          lit $TRITON_BUILD/third_party/qcom_arm64_backend/test
+
+      - name: Build QEMU
+        if: true
+        working-directory: ${{ github.workspace }}/cpu-mlir
+        run: |
+          set -ex
+          mkdir -p /tmp/triton-staging
+
+          echo "Downloading QEMU 11.1.3"
+          wget -q --show-progress https://download.qemu.org/qemu-11.1.3.tar.xz
+
+          echo "Validating QEMU archive"
+          xz -t qemu-11.1.3.tar.xz
+
+          echo "Extracting QEMU archive"
+          tar -xJf qemu-11.1.3.tar.xz
+          cd qemu-11.1.3
+          ./configure --target-list=aarch64-linux-user,aarch64-softmmu
+          make -j"$(nproc)"
+
+          QEMU_PATH="$PWD/build/qemu-aarch64"
+
+          if [ ! -x "$QEMU_PATH" ]; then
+            echo "::error::qemu-aarch64 was not built successfully"
+            exit 1
+          fi
+
+          "$QEMU_PATH" --version
+
+      - name: Run kernel tests on QEMU
+        if: true
+        working-directory: ${{ github.workspace }}/cpu-mlir/qcom_arm64_backend/python/examples
+        env:
+          QEMU_PATH: ${{ github.workspace }}/cpu-mlir/qemu-11.1.3/build/qemu-aarch64
+          RUN_ON_SIM: 1
+          TRITON_ARM64_STAGING_DIR: /tmp/triton-staging
+          TARGET_COMPILER: /local/mnt/workspace/llvm-b010a18d-for-triton-Aug-19-2026
+        run: |
+          set -eox pipefail
+          source ${{ github.workspace }}/cpu-mlir/.venv/bin/activate
+          source ${{ github.workspace }}/cpu-mlir/scripts/setup_env.sh $TARGET_COMPILER
+
+          echo "=== Running default tests ==="
+          ./run_pytest.sh -v 2>&1 | tee qemu_test_results.log
+
+          echo "=== Running NEON tests ==="
+          ./run_pytest.sh -v --target neon 2>&1 | tee qemu_test_results_neon.log
+
+          echo "=== Running SVE tests ==="
+          ./run_pytest.sh -v --target sve 2>&1 | tee qemu_test_results_sve.log
+
+      - name: Cleanup temporary files
+        if: always()
+        run: |
+          set -x
+          echo "Cleaning temporary QEMU and test files"
+          rm -rf "${{ github.workspace }}/cpu-mlir/qemu-11.1.3"
+          rm -f "${{ github.workspace }}/cpu-mlir/qemu-11.1.3.tar.xz"
+          rm -rf /tmp/triton-staging
+          echo "Cleanup completed"
