@@ -62,7 +62,9 @@ bool doesFuncReturnValue(ModuleOp moduleOp) {
 
   return moduleOp
       .walk([&](func::FuncOp op) {
-        if (!op.getResultTypes().empty())
+        // Only the entry points count: private helpers, such as an outlined
+        // SME loop that returns the values its loop carried, are internal.
+        if (op.isPublic() && !op.getResultTypes().empty())
           return WalkResult::interrupt();
         return WalkResult::advance();
       }).wasInterrupted();

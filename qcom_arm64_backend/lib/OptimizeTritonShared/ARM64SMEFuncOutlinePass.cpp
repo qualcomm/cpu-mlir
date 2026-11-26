@@ -108,11 +108,12 @@ static LogicalResult collectOutlinedInputs(scf::ForOp loop,
 }
 
 // Moves `loop` into a new private function after `parent` and replaces it with
-// a call.
+// a call. The loop's results become the function's results, e.g. the pointer
+// offsets a Triton k-loop carries.
 static LogicalResult outlineLoop(scf::ForOp loop, func::FuncOp parent,
                                  unsigned index) {
-  // After bufferization the loop writes to memrefs and has no results.
-  if (loop->getNumResults() != 0)
+  // Results cross the streaming boundary like arguments: no vectors.
+  if (llvm::any_of(loop->getResultTypes(), llvm::IsaPred<VectorType>))
     return failure();
 
   SmallVector<Value> args;
@@ -123,7 +124,8 @@ static LogicalResult outlineLoop(scf::ForOp loop, func::FuncOp parent,
   OpBuilder builder(parent);
   builder.setInsertionPointAfter(parent);
   std::string name = (parent.getSymName() + "_sme_" + Twine(index)).str();
-  auto funcType = builder.getFunctionType(ValueRange(args).getTypes(), {});
+  auto funcType = builder.getFunctionType(ValueRange(args).getTypes(),
+                                          loop->getResultTypes());
   auto func = func::FuncOp::create(builder, loop.getLoc(), name, funcType);
   // Private and internal: only `parent` calls it, so it needs neither a C
   // interface nor an exported symbol.
@@ -137,11 +139,12 @@ static LogicalResult outlineLoop(scf::ForOp loop, func::FuncOp parent,
   builder.setInsertionPointToStart(entry);
   for (Operation *op : toClone)
     builder.clone(*op, mapping);
-  builder.clone(*loop, mapping);
-  func::ReturnOp::create(builder, loop.getLoc());
+  Operation *clone = builder.clone(*loop, mapping);
+  func::ReturnOp::create(builder, loop.getLoc(), clone->getResults());
 
   builder.setInsertionPoint(loop);
-  func::CallOp::create(builder, loop.getLoc(), func, args);
+  auto call = func::CallOp::create(builder, loop.getLoc(), func, args);
+  loop->replaceAllUsesWith(call.getResults());
   loop.erase();
   return success();
 }
