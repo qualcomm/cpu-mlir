@@ -143,6 +143,10 @@ void addOptimizeTritonSharedPasses(mlir::OpPassManager &pm,
   // The vector lowering pass bufferizes, but bufferization never frees what it
   // allocates, so every program instance leaked its temporaries. This must run
   // while loops are still structured (SME lowers them to cf below).
+  // Allocate the per-iteration temporaries (e.g. the buffers of masked loads in
+  // a Triton k-loop) once, before the loop. Each malloc/free is a call, which
+  // in streaming code also means leaving and re-entering streaming mode.
+  pm.addNestedPass<func::FuncOp>(bufferization::createBufferLoopHoistingPass());
   bufferization::buildBufferDeallocationPipeline(pm);
   // Deallocs whose aliasing is only known at runtime (e.g. buffers returned
   // from loops) call a generated @dealloc_helper. Inline it: the driver
